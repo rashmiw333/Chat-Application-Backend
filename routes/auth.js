@@ -1,9 +1,8 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const User = require("../models/User");
+const User = require("../models/user.model");
 const dotenv = require("dotenv");
-
 const router = express.Router();
 
 dotenv.config();
@@ -32,12 +31,44 @@ router.post("/register", async (req, res) => {
 
         await user.save();
 
-        res.status(201).json({
-            message: "User registered successfully."
-        });
+        const token = jwt.sign({id:user._id},JWT_SECRET,
+            {expiresIn:"4h"});
+            res.status(201).json({message:"user registered successfully",token,username});
+
 
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: "Server error", 
+            error: error.message });
+    }
+});
+
+router.post("/login", async (req, res) => {
+    const { username, password } = req.body;
+
+    try {
+        const user = await User.findOne({ username });
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+
+        const isPasswordMatch = await user.comparePassword(password);
+
+        if (!isPasswordMatch) {
+            return res.status(400).json({ message: "Invalid Credentials" });
+        }
+
+        res
+            .status(200)
+            .json({
+                message: "Login successful",
+                username: user.username
+            });
+
+    } catch (error) {
+        res
+            .status(500)
+            .json({ message: "Server error while login.", error: error });
     }
 });
 
