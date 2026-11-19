@@ -7,8 +7,8 @@ const dotenv = require("dotenv");
 const authRoutes = require("./routes/auth");
 const { Server } = require("socket.io");
 const server = http.createServer(app);
-const io = new Server(server);
-const Messages = require("./models/Messages");
+
+const Messages = require("./models/messages.model");
 const User = require("./models/user.model");
 
 app.use(express.json());
@@ -22,27 +22,117 @@ initializeDatabase();
 // const { initializeDatabase } = require("./db/db.connect");
 // initializeDatabase();
 
+const io = new Server(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
+});
+
+//const io = new Server(server);
+
 // Routes
 app.use("/auth", authRoutes);
 
 // socket io logic
+
 io.on("connection", (socket) => {
     console.log("User connected", socket.id);
 
-    socket.on("send_message", async (data) => {
-        const { sender, receiver, message } = data;
-
-        const newMessage = new Messages({ sender, receiver, message });
-        await newMessage.save();
+    // Register connected user
+    socket.on("register_user", (username) => {
+        socket.join(username);
+        console.log(`${username} joined their room`);
+        console.log("Current rooms:", socket.rooms);
     });
 
-    socket.broadcast.emit("receive_message", data);
+    // Send message
+    socket.on("send_message", async (data) => {
+        try {
+            const { sender, receiver, message } = data;
 
-    socket.on("disconnect", () => {
-    console.log("User disconnected", socket.id);
+            const newMessage = new Messages({
+                sender,
+                receiver,
+                message
+            });
 
+            await newMessage.save();
+
+            // Confirm message saved to sender
+            socket.emit("message_sent", newMessage);
+
+            // Send message only to receiver
+            io.to(receiver).emit("receive_message", newMessage);
+
+        } catch (error) {
+            console.log("Error sending message:", error);
+        }
+    });
+
+    // Typing indicator
+socket.on("typing", (data) => {
+    console.log(`${data.sender} is typing to ${data.receiver}`);
+
+    io.to(data.receiver).emit("user_typing", {
+        username: data.sender
     });
 });
+
+// Stop typing
+socket.on("stop_typing", (data) => {
+    console.log(`${data.sender} stopped typing`);
+
+    io.to(data.receiver).emit("user_stop_typing", {
+        username: data.sender
+    });
+});
+
+    // Message delivered
+    socket.on("message_delivered", async (messageId) => {
+        try {
+            const message = await Messages.findByIdAndUpdate(
+                messageId,
+                { status: "delivered" },
+                { new: true }
+            );
+
+            if (message) {
+                io.to(message.sender).emit("message_status", {
+                    messageId,
+                    status: "delivered"
+                });
+            }
+        } catch (error) {
+            console.log(error);
+        }
+    });
+
+    // Message read
+    socket.on("message_read", async (messageId) => {
+        try {
+            const message = await Messages.findByIdAndUpdate(
+                messageId,
+                { status: "read" },
+                { new: true }
+            );
+
+            if (message) {
+                io.to(message.sender).emit("message_status", {
+                    messageId,
+                    status: "read"
+                });
+            }
+        } catch (error) {
+            console.log(error);
+        }
+    });
+
+    socket.on("disconnect", () => {
+        console.log("User disconnected", socket.id);
+    });
+});
+
 
 app.get("/messages", async (req, res) => {
     const { sender, receiver } = req.query;
@@ -79,6 +169,6 @@ app.get("/users", async (req, res) => {
 
 const PORT = process.env.PORT || 5001;
 
-app.listen(PORT, () =>
+server.listen(PORT, () =>
     console.log(`Server running on port ${PORT}`)
 );
